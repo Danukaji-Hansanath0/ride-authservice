@@ -10,34 +10,102 @@ This guide explains how to run and test the auth-service independently using Doc
 
 ## Quick Start
 
-### 1. Configure Environment Variables (Optional)
+### Method 1: VPS Deployment (Recommended for VPS/Cloud Servers)
+
+For deploying on a VPS or cloud server with automatic IP detection:
+
+```bash
+cd auth-service
+chmod +x start-vps.sh
+./start-vps.sh
+```
+
+The script will:
+- Detect your VPS public and private IP addresses
+- Let you choose which IP to use for RD_AUTH_SERVER_HOST
+- Configure the .env file automatically
+- Choose between standalone (no RabbitMQ) or full stack mode
+- Check if required ports are available
+- Start the services in foreground or background mode
+
+**This is the recommended method if you are on a VPS!**
+
+### Method 2: Using the Original Start Script
+
+For local development or manual configuration:
+
+```bash
+cd auth-service
+./start.sh
+```
+
+The script will:
+- Check if Docker is running
+- Let you configure VPS IP address
+- Check if required ports are available
+- Start the services in foreground or background mode
+
+### Method 3: Manual Docker Compose (Standalone - No RabbitMQ)
+
+#### 1. Configure Environment Variables
 
 Edit the `.env` file to set your VPS IP address:
 
 ```bash
-# Open .env file
+# Create or edit .env file
 nano .env
-
-# Change this line:
-VPS_IP_ADDRESS=your-vps-ip-address
-# Example: VPS_IP_ADDRESS=192.168.1.100
 ```
 
-For local testing, you can leave it as `localhost`.
+Add these lines:
+```bash
+VPS_IP_ADDRESS=your-vps-ip-address
+RD_AUTH_SERVER_HOST=your-vps-ip-address
+# Example: 
+# VPS_IP_ADDRESS=45.123.45.67
+# RD_AUTH_SERVER_HOST=45.123.45.67
+```
 
-### 2. Start the Auth Service
+For local testing, you can use `localhost`.
+
+#### 2. Start the Auth Service (Standalone - No RabbitMQ)
 
 From the `auth-service` directory, run:
 
 ```bash
-# Build and start the services
+# Build and start the service (without RabbitMQ)
+docker-compose -f docker-compose.standalone.yaml up --build
+
+# Or run in detached mode (background)
+docker-compose -f docker-compose.standalone.yaml up --build -d
+```
+
+#### 3. Verify Service is Running
+
+Check service status:
+```bash
+docker-compose -f docker-compose.standalone.yaml ps
+```
+
+You should see:
+- `auth-service-standalone` - Running on port 8081
+
+### Method 4: Manual Docker Compose (Full Stack with RabbitMQ)
+
+If you need RabbitMQ for message queue functionality:
+
+#### 1. Use the same .env configuration as above
+
+#### 2. Start with RabbitMQ
+
+```bash
+# Build and start the services (with RabbitMQ)
 docker-compose up --build
 
 # Or run in detached mode (background)
 docker-compose up --build -d
 ```
 
-### 3. Verify Services are Running
+#### 3. Verify Services are Running
 
 Check service status:
 ```bash
@@ -48,14 +116,19 @@ You should see:
 - `auth-service` - Running on port 8081
 - `rabbitmq` - Running on ports 5672 (AMQP) and 15672 (Management UI)
 
-### 4. Access the Services
+## Access the Services
 
-- **Auth Service API**: http://localhost:8081
-- **Auth Service Swagger UI**: http://localhost:8081/swagger-ui.html
-- **Auth Service API Docs**: http://localhost:8081/v3/api-docs
-- **RabbitMQ Management UI**: http://localhost:15672
-  - Username: `guest`
-  - Password: `guest`
+### Standalone Mode (No RabbitMQ):
+- **Auth Service API**: http://localhost:8081 or http://YOUR-VPS-IP:8081
+- **Auth Service Swagger UI**: http://YOUR-VPS-IP:8081/swagger-ui.html
+- **Auth Service API Docs**: http://YOUR-VPS-IP:8081/v3/api-docs
+- **Health Check**: http://YOUR-VPS-IP:8081/actuator/health
+
+### Full Stack Mode (With RabbitMQ):
+- **Auth Service API**: http://localhost:8081 or http://YOUR-VPS-IP:8081
+- **Auth Service Swagger UI**: http://YOUR-VPS-IP:8081/swagger-ui.html
+- **Auth Service API Docs**: http://YOUR-VPS-IP:8081/v3/api-docs
+- **Health Check**: http://YOUR-VPS-IP:8081/actuator/health
 
 ## Testing the Auth Service
 

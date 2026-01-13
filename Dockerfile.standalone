@@ -1,0 +1,30 @@
+# Standalone Dockerfile for auth-service (no parent dependencies)
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+EXPOSE 8081
+
+ENV RD_AUTH_SERVER_HOST=localhost
+ENV RD_AUTH_SERVER_PORT=8081
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:InitialRAMPercentage=75.0 -XX:MaxRAMPercentage=75.0"
+# Environment variables with defaults
+
+COPY --from=builder /app/target/*.jar app.jar
+WORKDIR /app
+
+USER spring:spring
+RUN addgroup --system spring && adduser --system --ingroup spring spring
+FROM eclipse-temurin:21-jre-jammy
+# Production stage
+
+RUN chmod +x mvnw && ./mvnw clean package -DskipTests
+# Build the application
+
+COPY src src
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+# Copy Maven files
+
+WORKDIR /app
+
+FROM eclipse-temurin:21-jdk-jammy AS builder
+
