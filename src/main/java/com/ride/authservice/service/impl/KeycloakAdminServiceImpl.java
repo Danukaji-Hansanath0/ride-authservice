@@ -1,7 +1,9 @@
 package com.ride.authservice.service.impl;
 
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ride.authservice.dto.*;
 import com.ride.authservice.event.EventPublisher;
 import com.ride.authservice.event.UserCreateEvent;
@@ -10,6 +12,7 @@ import com.ride.authservice.exception.EmailVerificationRequiredException;
 import com.ride.authservice.exception.NotFoundException;
 import com.ride.authservice.exception.ServiceOperationException;
 import com.ride.authservice.service.KeycloakAdminService;
+import com.ride.authservice.service.UserServiceClientWebClient;
 import jakarta.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;import org.keycloak.OAuth2Constants;
@@ -33,7 +36,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.keycloak.util.JsonSerialization.mapper;
 
@@ -51,6 +56,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
     private final String clientId;
     private final String clientSecret;
     private final EventPublisher eventPublisher;
+    private final UserServiceClientWebClient userServiceClientWebClient;
 
     /**
      * Constructor for initializing KeycloakAdminServiceImpl with required configurations.
@@ -68,13 +74,15 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
             @Value("${keycloak.admin.client-id}") String clientId,
             @Value("${keycloak.admin.client-secret}") String clientSecret,
             @Value("${keycloak.admin.token-url}") String tokenUrl,
-            EventPublisher eventPublisher
+            EventPublisher eventPublisher,
+            UserServiceClientWebClient userServiceClientWebClient
     ) {
         this.realm = realm;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.tokenUrl = tokenUrl;
         this.eventPublisher = eventPublisher;
+        this.userServiceClientWebClient = userServiceClientWebClient;
         this.keycloak = KeycloakBuilder.builder()
                 .serverUrl(serverUrl)
                 .realm(realm)
@@ -200,7 +208,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      * @param request The registration request.
      * @return A UserRepresentation object.
      */
-    private static @NonNull UserRepresentation getUserRepresentation(RegisterRequest request) {
+    private static @NonNull UserRepresentation getUserRepresentation(@org.jspecify.annotations.NonNull RegisterRequest request) {
         UserRepresentation user = new UserRepresentation();
         user.setUsername(request.email());
         user.setEmail(request.email());
@@ -250,7 +258,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      * @return A LoginResponse object with authentication tokens.
      */
     @Override
-    public LoginResponse loginUser(LoginRequest request) {
+    public LoginResponse loginUser(@org.jspecify.annotations.NonNull LoginRequest request) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
@@ -260,9 +268,25 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         form.add("client_secret", clientSecret);
         form.add("username", request.email());
         form.add("password", request.password());
-
+        Map<String , Object> mapData = new HashMap<>();
         try {
-            return getLoginResponse(headers, form);
+            try{
+                Object data = userServiceClientWebClient.getUserProfile(request.email());
+                ObjectMapper mapper1 = new ObjectMapper();
+                String jsonString = mapper1.writeValueAsString(data);
+
+                JsonNode jsonNode = mapper1.readTree(jsonString);
+                mapData.put("firstName", jsonNode.get("firstName").asText(null));
+                mapData.put("lastName", jsonNode.get("lastName").asText(null));
+                mapData.put("uid", jsonNode.get("uid").asText(null));
+                mapData.put("email", jsonNode.get("email").asText(null));
+                mapData.put("phoneNumber", jsonNode.get("phoneNumber").asText(null));
+                mapData.put("userAvailability", jsonNode.get("userAvailability").asText(null));
+                mapData.put("isActive", jsonNode.get("isActive").asBoolean(false));
+            }catch (JsonParseException e){
+                throw new AuthenticationFailedException("Invalid response format from authentication server: " + e.getMessage(), e);
+            }
+            return getLoginResponse(headers, form, mapData);
         } catch (HttpClientErrorException e) {
             String body = e.getResponseBodyAsString();
             int statusCode = e.getStatusCode().value();
@@ -332,7 +356,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         form.add("refresh_token", refreshToken);
 
         try {
-            return getLoginResponse(headers, form);
+            return getLoginResponse(headers, form, null);
         } catch (Exception e) {
             throw new AuthenticationFailedException("Token refresh error: " + e.getMessage(), e);
         }
@@ -491,6 +515,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         }
     }
 
+
     /**
      * Helper method to send an HTTP request to Keycloak and parse the response.
      *
@@ -500,7 +525,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      * @throws JsonProcessingException If there is an error parsing the response.
      */
     @NonNull
-    private LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form) throws JsonProcessingException {
+    private LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form, Map<String,Object> data) throws JsonProcessingException {
         ResponseEntity<String> response = restTemplate.postForEntity(tokenUrl, new HttpEntity<>(form, headers), String.class);
         JsonNode json = mapper.readTree(response.getBody());
         return new LoginResponse(
@@ -509,7 +534,13 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
                 json.path("expires_in").asLong(0),
                 json.path("refresh_expires_in").asLong(0),
                 json.path("token_type").asText(null),
-                json.path("scope").asText(null)
+                json.path("scope").asText(null),
+                data.get("firstName").toString(),
+                data.get("lastName").toString(),
+                data.get("email").toString(),
+                data.get("uid").toString(),
+                data.get("userAvailability").toString(),
+                Boolean.parseBoolean(data.get("isActive").toString())
         );
     }
 }

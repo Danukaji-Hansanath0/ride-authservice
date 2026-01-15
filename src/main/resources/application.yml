@@ -6,7 +6,7 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${RD_AUTH_ISSUER_URI:https://keycloak.orysone.com/realms/user-authentication-realm}
+          issuer-uri: ${RD_AUTH_ISSUER_URI:https://auth.rydeflexi.com/realms/service-authentication}
 
   # RabbitMQ Configuration
   rabbitmq:
@@ -37,12 +37,21 @@ keycloak:
     auth2-client:
       auth-url: ${RD_KEYCLOAK_ADMIN_AUTH_URL:https://auth.rydeflexi.com/realms/user-authentication/protocol/openid-connect/auth}
       client-id: ${RD_AUTH2_CLIENT_ID:auth2-client}
-      client-secret: ${RD_AUTH2_CLIENT_SECRET:61wbbZiDccvr53XUfEq0WOXvNtSdu1Sy}
+      client-secret: ${RD_AUTH2_CLIENT_SECRET:mnGbk01IbCyIdSP8LEhniIcoEuQ9LQPJ}
+    service-realm:
+        name: ${RD_KEYCLOAK_SERVICE_REALM:service-authentication}
+        client-id: ${RD_KEYCLOAK_SERVICE_CLIENT_ID:svc-auth}
+        client-secret: ${RD_KEYCLOAK_SERVICE_CLIENT_SECRET:pKPGmkqLJIJmqjnwCRLjbrVH27eD0oL3}
+        token-url: ${RD_KEYCLOAK_SERVICE_TOKEN_URL:https://auth.rydeflexi.com/realms/service-authentication/protocol/openid-connect/token}
 
 # External Services Configuration
 services:
   user-service:
     url: ${USER_SERVICE_URL:http://localhost:8086}
+
+# CORS Configuration
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080,https://rydeflexi.com}
 
 # Swagger/OpenAPI Configuration
 springdoc:
@@ -57,4 +66,50 @@ springdoc:
     tryItOutEnabled: true
     filter: true
   show-actuator: false
+
+# Security Configuration
+security:
+  ip:
+    enabled: true
+    max-failed-attempts: 10
+    max-requests-per-minute: 60
+    blacklist-duration-minutes: 60
+    whitelist:
+      - "127.0.0.1"
+      - "::1"
+  rate-limit:
+    enabled: true
+    login-limit: 10
+    register-limit: 5
+    oauth-limit: 20
+  request-validation:
+    enabled: true
+    max-request-size: 1048576  # 1MB
+    enforce-utf8: true
+    validate-json: true
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      keycloak:
+        register-health-indicator: true
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        wait-duration-in-open-state: 10s
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 100
+        slow-call-duration-threshold: 3s
+  retry:
+    instances:
+      keycloak:
+        max-attempts: 3
+        wait-duration: 500ms
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.springframework.web.client.RestClientException
+          - java.io.IOException
+
 

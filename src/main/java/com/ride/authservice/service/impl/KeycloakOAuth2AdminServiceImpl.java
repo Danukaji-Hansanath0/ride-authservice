@@ -17,7 +17,11 @@ public class KeycloakOAuth2AdminServiceImpl implements KeycloakOAuth2AdminServic
                 3600,
                 7200,
                 "Bearer",
-                "openid profile email"
+                "openid profile email",
+                "John",
+                "Doe",
+                "johndoe@mail.com",
+                "user-service-user-id"
         );
     }
 }

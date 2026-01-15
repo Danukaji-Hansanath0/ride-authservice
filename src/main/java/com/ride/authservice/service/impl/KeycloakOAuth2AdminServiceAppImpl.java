@@ -2,12 +2,18 @@ package com.ride.authservice.service.impl;
 
 import com.ride.authservice.dto.LoginResponse;
 import com.ride.authservice.service.KeycloakOAuth2AdminServiceApp;
+import com.ride.authservice.service.SecurityEventLogger;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -25,6 +31,7 @@ public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminSer
     private final String clientId;
     private final RestTemplate restTemplate;
     private final String keycloakTokenUrl;
+    private final SecurityEventLogger securityEventLogger;
 
     /**
      * Google OAuth2 valid scopes.
@@ -48,19 +55,21 @@ public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminSer
      * @param clientId Keycloak client ID for OAuth2
      * @param restTemplate RestTemplate for HTTP requests
      * @param keycloakTokenUrl Keycloak token endpoint URL
+     * @param securityEventLogger Logger for security events
      */
     public KeycloakOAuth2AdminServiceAppImpl(
             @Value("${keycloak.admin.auth2-client.auth-url}") String keycloakAuthUrl,
             @Value("${keycloak.admin.auth2-client.client-id}") String clientId,
             RestTemplate restTemplate,
-            @Value("${keycloak.admin.token-url}") String keycloakTokenUrl
+            @Value("${keycloak.admin.token-url}") String keycloakTokenUrl,
+            SecurityEventLogger securityEventLogger
     ) {
         this.clientId = clientId;
         this.keycloakAuthUrl = keycloakAuthUrl;
         this.restTemplate = restTemplate;
         this.keycloakTokenUrl = keycloakTokenUrl;
-
-            }
+        this.securityEventLogger = securityEventLogger;
+    }
 
     /**
      * Generates the Google login URL for mobile clients using PKCE.
@@ -119,6 +128,8 @@ public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminSer
      * @throws RuntimeException if token exchange fails
      */
     @Override
+    @CircuitBreaker(name = "keycloak", fallbackMethod = "exchangeCodeFallback")
+    @Retry(name = "keycloak")
     public LoginResponse exchangeGoogleCodeForTokenMobile(String code, String codeVerifier, String redirectUri) {
         log.info("Exchanging authorization code for tokens");
         log.debug("Code: {}, Redirect URI: {}", code, redirectUri);
@@ -137,10 +148,34 @@ public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminSer
             LoginResponse response = getLoginResponse(headers, form);
             log.info("Token exchange successful. Access token obtained.");
             return response;
+        } catch (HttpClientErrorException e) {
+            log.error("HTTP error during token exchange: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            securityEventLogger.logOAuth2Error("google", e.getMessage(), "server");
+
+            if (e.getStatusCode() == HttpStatus.BAD_REQUEST) {
+                throw new RuntimeException("Invalid authorization code or parameters", e);
+            } else if (e.getStatusCode() == HttpStatus.UNAUTHORIZED) {
+                throw new RuntimeException("Authentication failed with identity provider", e);
+            }
+            throw new RuntimeException("Token exchange failed: " + e.getMessage(), e);
+        } catch (RestClientException e) {
+            log.error("Rest client error during token exchange: {}", e.getMessage(), e);
+            securityEventLogger.logKeycloakError("token_exchange", e.getMessage(), "server");
+            throw new RuntimeException("Failed to communicate with authentication service: " + e.getMessage(), e);
         } catch (Exception e) {
-            log.error("Failed to exchange code for token: {}", e.getMessage(), e);
+            log.error("Unexpected error during token exchange: {}", e.getMessage(), e);
+            securityEventLogger.logKeycloakError("token_exchange", e.getMessage(), "server");
             throw new RuntimeException("Token exchange failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Fallback method for circuit breaker when Keycloak is unavailable.
+     */
+    private LoginResponse exchangeCodeFallback(String code, String codeVerifier, String redirectUri, @NonNull Exception ex) {
+        log.error("Circuit breaker activated - Keycloak unavailable: {}", ex.getMessage());
+        securityEventLogger.logKeycloakError("circuit_breaker_open", ex.getMessage(), "server");
+        throw new RuntimeException("Authentication service is temporarily unavailable. Please try again later.", ex);
     }
 
     /**
@@ -153,7 +188,7 @@ public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminSer
      * @return LoginResponse containing access token, refresh token, and metadata
      * @throws RuntimeException if the HTTP request fails or returns non-200 status
      */
-    private LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form) {
+    private @NonNull LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form) {
         log.debug("Sending token exchange request to: {}", keycloakTokenUrl);
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(form, headers);

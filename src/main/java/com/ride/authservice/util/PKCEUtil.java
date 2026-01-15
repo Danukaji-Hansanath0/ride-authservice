@@ -19,9 +19,7 @@ public class PKCEUtil {
      * @return A base64url-encoded random string
      */
     public static String generateCodeVerifier() {
-        byte[] code = new byte[32];
-        new SecureRandom().nextBytes(code);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(code);
+        return generateState();
     }
 
     /**

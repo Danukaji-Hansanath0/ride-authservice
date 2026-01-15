@@ -3,6 +3,7 @@ package com.ride.authservice.controller;
 import com.ride.authservice.dto.*;
 import com.ride.authservice.service.KeycloakAdminService;
 import com.ride.authservice.util.JwtUtil;
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +30,7 @@ public class AuthController {
      * @return A ResponseEntity containing the registration response.
      */
     @PostMapping("/auth/register")
-    public ResponseEntity<RegisterResponse> register(@RequestBody RegisterRequest request) {
+    public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
         log.info(
                 "Received registration request for email: {}, firstName: {}, lastName: {}",
                 request.email(),
@@ -47,7 +48,7 @@ public class AuthController {
      * @return A ResponseEntity containing the login response.
      */
     @PostMapping("/auth/login")
-    public ResponseEntity<LoginResponse> login(@RequestBody @NonNull LoginRequest request) {
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody @NonNull LoginRequest request) {
         log.info(
                 "Received login request for email: {}",
                 request.email()
@@ -109,8 +110,11 @@ public class AuthController {
      * @param userId The ID of the user.
      * @return A ResponseEntity indicating the operation status.
      */
-    @GetMapping("/auth/password-reset/{userId}")
-    public ResponseEntity<Void> sendPasswordResetEmail(@PathVariable String userId) {
+    @GetMapping("/auth/password-reset")
+    public ResponseEntity<Void> sendPasswordResetEmail(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody PasswordChangeRequest passwordChangeRequest
+    ) {
         log.info(
                 "Received password reset email request for userId: {}",
                 userId
@@ -137,21 +141,6 @@ public class AuthController {
         try {
             // Extract user ID from JWT token
             String userId = jwtUtil.extractUserIdFromToken(authHeader);
-            log.info("Extracted user ID from token: {}", userId);
-
-            // Validate token format
-            if (!jwtUtil.isValidTokenFormat(authHeader)) {
-                log.error("Invalid token format");
-                EmailUpdatedResponse errorResponse = new EmailUpdatedResponse(
-                        null,
-                        request.getNewEmail(),
-                        "Invalid authentication token format.",
-                        false
-                );
-                return ResponseEntity.status(401).body(errorResponse);
-            }
-
-            // Call service to update email
             EmailUpdatedResponse response = keycloakAdminService.changeUserEmail(request);
 
             if (response.isSuccess()) {
@@ -181,5 +170,15 @@ public class AuthController {
             );
             return ResponseEntity.status(500).body(errorResponse);
         }
+    }
+
+    @PutMapping("/auth/change-email")
+    public ResponseEntity<EmailUpdatedResponse> changeEmail(@RequestBody EmailChangeRequest request) {
+        log.info(
+                "Received email change request for email: {}",
+                request.getEmail()
+        );
+        EmailUpdatedResponse response = keycloakAdminService.changeUserEmail(request);
+        return ResponseEntity.status(200).body(response);
     }
 }

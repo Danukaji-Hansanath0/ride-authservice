@@ -3,7 +3,11 @@ package com.ride.authservice.controller;
 import com.ride.authservice.dto.LoginResponse;
 import com.ride.authservice.service.KeycloakOAuth2AdminServiceApp;
 import com.ride.authservice.util.PKCEUtil;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -15,6 +19,7 @@ import java.util.Map;
 @AllArgsConstructor
 @RestController
 @RequestMapping("/api")
+@Validated
 public class MobileAuthController {
     private final KeycloakOAuth2AdminServiceApp keycloakAdminService;
 
@@ -28,8 +33,8 @@ public class MobileAuthController {
      */
     @GetMapping("/login/google/mobile")
     public Map<String, String> getGoogleLoginUrlForMobile(
-            @RequestParam String codeVerifier,
-            @RequestParam String redirectUri
+            @RequestParam @NotBlank @Size(min = 43, max = 128) String codeVerifier,
+            @RequestParam @NotBlank @Pattern(regexp = "^https?://.*", message = "Invalid redirect URI format") String redirectUri
     ) {
         String codeChallenge = PKCEUtil.generateCodeChallenge(codeVerifier);
         String state = PKCEUtil.generateState();
@@ -55,9 +60,9 @@ public class MobileAuthController {
      */
     @PostMapping("/google/callback/mobile")
     public LoginResponse handleGoogleCallbackMobile(
-            @RequestParam String code,
-            @RequestParam String codeVerifier,
-            @RequestParam String redirectUri
+            @RequestParam @NotBlank String code,
+            @RequestParam @NotBlank @Size(min = 43, max = 128) String codeVerifier,
+            @RequestParam @NotBlank @Pattern(regexp = "^https?://.*", message = "Invalid redirect URI format") String redirectUri
     ) {
 
         return keycloakAdminService.exchangeGoogleCodeForTokenMobile(code, codeVerifier, redirectUri);
