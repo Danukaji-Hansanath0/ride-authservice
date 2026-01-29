@@ -15,6 +15,12 @@ import java.util.Map;
 /**
  * REST controller for handling mobile OAuth2 authentication flows.
  * Provides endpoints for initiating Google login and handling callbacks.
+ *
+ * IMPORTANT: For proper OAuth2 flow, use the dedicated callback endpoint:
+ * - Swagger UI: http://localhost:8081/oauth2/callback/swagger
+ * - Mobile: http://localhost:8081/oauth2/callback/mobile
+ *
+ * These endpoints are registered in SecurityConfig as public paths.
  */
 @AllArgsConstructor
 @RestController

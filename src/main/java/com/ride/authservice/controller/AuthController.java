@@ -79,7 +79,7 @@ public class AuthController {
      * @return A ResponseEntity containing the email verification status.
      */
     @GetMapping("/auth/verify-email/{userId}")
-    public ResponseEntity<Boolean> isEmailVerified(@PathVariable String userId) {
+    public ResponseEntity<Boolean> isEmailVerified(@PathVariable @NonNull String userId) {
         log.info(
                 "Received email verification status request for userId: {}",
                 userId
@@ -95,7 +95,7 @@ public class AuthController {
      * @return A ResponseEntity indicating the operation status.
      */
     @GetMapping("/auth/send-verification-email/{userId}")
-    public ResponseEntity<Void> sendVerificationEmail(@PathVariable String userId) {
+    public ResponseEntity<Void> sendVerificationEmail(@PathVariable @NonNull String userId) {
         log.info(
                 "Received send verification email request for userId: {}",
                 userId
@@ -107,19 +107,16 @@ public class AuthController {
     /**
      * Sends a password reset email to the user.
      *
-     * @param userId The ID of the user.
+     * @param email The email address of the user.
      * @return A ResponseEntity indicating the operation status.
      */
-    @GetMapping("/auth/password-reset")
-    public ResponseEntity<Void> sendPasswordResetEmail(
-            @RequestHeader("Authorization") String authHeader,
-            @RequestBody PasswordChangeRequest passwordChangeRequest
-    ) {
+    @PostMapping("/auth/password-reset")
+    public ResponseEntity<Void> sendPasswordResetEmail(@RequestParam @NonNull String email) {
         log.info(
-                "Received password reset email request for userId: {}",
-                userId
+                "Received password reset email request for email: {}",
+                email
         );
-        keycloakAdminService.sendPasswordResetEmail(userId);
+        keycloakAdminService.sendPasswordResetEmail(email);
         return ResponseEntity.status(200).build();
     }
 
@@ -173,12 +170,24 @@ public class AuthController {
     }
 
     @PutMapping("/auth/change-email")
-    public ResponseEntity<EmailUpdatedResponse> changeEmail(@RequestBody EmailChangeRequest request) {
+    public ResponseEntity<EmailUpdatedResponse> changeEmail(@Valid @RequestBody @NonNull EmailChangeRequest request) {
         log.info(
                 "Received email change request for email: {}",
                 request.getEmail()
         );
         EmailUpdatedResponse response = keycloakAdminService.changeUserEmail(request);
         return ResponseEntity.status(200).body(response);
+    }
+
+    /**
+     * Updates user profile (firstName, lastName) directly in Keycloak.
+     *
+     * @param request Profile update request containing email, firstName, lastName
+     * @return 200 OK on success
+     */
+    @PutMapping("/auth/update-profile")
+    public ResponseEntity<Void> updateUserProfile(@RequestBody @NonNull UpdateProfileRequest request) {
+        keycloakAdminService.updateUserProfile(request);
+        return ResponseEntity.ok().build();
     }
 }

@@ -4,15 +4,34 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.header.writers.XXssProtectionHeaderWriter;
 
+/**
+ * Security Configuration for Auth Service
+ * Supports dual JWT authentication from both user-authentication and service-authentication realms
+ *
+ * @author Ride Platform Team
+ * @version 1.0.0
+ * @since 2026-01-26
+ */
 @Configuration
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
+
+    private final MultiRealmJwtDecoder multiRealmJwtDecoder;
+
+    public SecurityConfig(MultiRealmJwtDecoder multiRealmJwtDecoder) {
+        this.multiRealmJwtDecoder = multiRealmJwtDecoder;
+    }
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -38,19 +57,23 @@ public class SecurityConfig {
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/v3/api-docs.yaml").permitAll()
                         .requestMatchers("/swagger-resources/**", "/webjars/**").permitAll()
+                        // OAuth2 callback endpoints (must be public for Keycloak to redirect)
+                        .requestMatchers("/oauth2/callback/**").permitAll()
+                        // Auth endpoints - public
                         .requestMatchers(HttpMethod.POST, "/api/auth/register").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/verify-email/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/send-verification-email/**").permitAll()
-                        .requestMatchers( "/api/auth/password-reset/**").permitAll()
-                        .requestMatchers("/api/login/google/mobile","/api//google/callback/mobile").permitAll()
-                        // Email update endpoint requires authentication (JWT token)
+                        .requestMatchers("/api/auth/password-reset/**").permitAll()
+                        .requestMatchers("/api/login/google/mobile","/api/google/callback/mobile").permitAll()
+                        // Protected endpoints - require JWT authentication
                         .requestMatchers(HttpMethod.PUT, "/api/auth/update-email").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/auth/update-profile").authenticated()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth -> oauth
-                        .jwt(Customizer.withDefaults())
+                        .jwt(jwt -> jwt.decoder(multiRealmJwtDecoder))
                 );
         return http.build();
     }

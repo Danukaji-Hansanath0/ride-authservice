@@ -9,9 +9,10 @@ import org.springframework.stereotype.Component;
 
 @Component
 @Slf4j
+@SuppressWarnings("unused") // messageProducer will be used when event publishing is enabled
 public class UserProfileHandler extends AbstractEventHandler<UserCreateEvent> {
 
-    private final UserProfileMessageProducer messageProducer;
+    private final UserProfileMessageProducer messageProducer; // TODO: Will be used when event publishing is enabled
 
     public UserProfileHandler(UserProfileMessageProducer messageProducer) {
         super(UserCreateEvent.class, 2);
@@ -21,8 +22,7 @@ public class UserProfileHandler extends AbstractEventHandler<UserCreateEvent> {
     @Override
     public void handle(UserCreateEvent event) {
         try {
-            log.info("Processing user profile creation for user: {} with email: {}",
-                    event.getName(), event.getEmail());
+            log.info("Processing user profile creation for user: {} with email: {}", event.getName(), event.getEmail());
 
             // Extract first and last name from the full name
             String[] nameParts = event.getName().split(" ", 2);
@@ -31,19 +31,21 @@ public class UserProfileHandler extends AbstractEventHandler<UserCreateEvent> {
 
             // Create user profile request
             UserProfileRequest userRequest = UserProfileRequest.builder()
+                    .userId(event.getUserId()) // preserve Keycloak ID as primary key in user-service
                     .email(event.getEmail())
                     .firstName(firstName)
                     .lastName(lastName)
                     .phoneNumber(null) // Not available in the event
                     .profilePictureUrl(null) // Default null
                     .isActive(true) // New users are active by default
+                    .isVerified(false) // Default to false, can be updated via admin console or email verification
                     .build();
 
             // Send message to queue instead of direct HTTP call
             // This ensures the message is persisted even if user-service is down
             messageProducer.sendUserProfileCreationMessage(userRequest);
 
-            log.info("User profile creation message queued successfully for: {}", event.getEmail());
+            log.info("User profile creation message queued successfully for: {} ({})", event.getName(), event.getEmail());
 
         } catch (Exception e) {
             log.error("Failed to queue user profile creation for user: {} with email: {}",

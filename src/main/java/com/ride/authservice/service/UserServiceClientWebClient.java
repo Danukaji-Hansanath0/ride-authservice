@@ -101,9 +101,7 @@ public class UserServiceClientWebClient {
         return serviceTokenService.getAccessToken()
                 .flatMap(token ->
                     userServiceWebClient.put()
-                            .uri(uriBuilder -> uriBuilder
-                                    .path("/api/v1/users/{email}")
-                                    .build(email))
+                            .uri("/api/v1/users")
                             .contentType(MediaType.APPLICATION_JSON)
                             .headers(headers -> headers.setBearerAuth(token))
                             .bodyValue(userRequest)

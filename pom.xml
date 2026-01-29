@@ -19,6 +19,11 @@
     </properties>
 
     <dependencies>
+        <!-- Eureka Client for Service Discovery -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
+        </dependency>
         <!-- https://mvnrepository.com/artifact/com.google.auth/google-auth-library-oauth2-http -->
         <dependency>
             <groupId>com.google.auth</groupId>

@@ -1,6 +1,8 @@
 package com.ride.authservice.event;
 
 import lombok.Getter;
+import org.jetbrains.annotations.Contract;
+import org.jspecify.annotations.NonNull;
 
 import java.time.LocalDateTime;
 
@@ -18,7 +20,8 @@ public class UserCreateEvent extends BaseEvent {
         this.name = name;
     }
 
-    public static UserCreateEvent create(String userId, String email, String name) {
+    @Contract("_, _, _ -> new")
+    public static @NonNull UserCreateEvent create(String userId, String email, String name) {
         return new UserCreateEvent(userId, email, name);
     }
 }

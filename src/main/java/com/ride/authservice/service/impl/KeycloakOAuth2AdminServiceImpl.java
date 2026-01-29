@@ -21,7 +21,9 @@ public class KeycloakOAuth2AdminServiceImpl implements KeycloakOAuth2AdminServic
                 "John",
                 "Doe",
                 "johndoe@mail.com",
-                "user-service-user-id"
+                "user-service-user-id",
+                "AVAILABLE",
+                true
         );
     }
 }

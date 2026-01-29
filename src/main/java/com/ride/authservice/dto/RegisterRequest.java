@@ -1,7 +1,5 @@
 package com.ride.authservice.dto;
 
-//TODO: Add validation annotations
-
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
