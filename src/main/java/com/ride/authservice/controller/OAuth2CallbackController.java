@@ -22,7 +22,7 @@ import java.nio.charset.StandardCharsets;
  * This provides a clean, stable callback endpoint without fragments or complex URLs.
  */
 @RestController
-@RequestMapping("/oauth2")
+@RequestMapping("/api/v1/auth/oauth2")
 @RequiredArgsConstructor
 @Slf4j
 @Tag(name = "OAuth2 Callback", description = "OAuth2 callback endpoints for authentication flows")
@@ -41,7 +41,7 @@ public class OAuth2CallbackController {
      * This is where Keycloak redirects after successful Google authentication.
      *
      * IMPORTANT: For Keycloak OAuth2 flow to work correctly:
-     * 1. In Keycloak Admin Console, set Valid Redirect URIs to http://localhost:8081/oauth2/callback/swagger
+     * 1. In Keycloak Admin Console, set Valid Redirect URIs to http://localhost:8081/api/v1/auth/oauth2/callback/swagger
      * 2. Do NOT use fragments with # in redirect URIs
      * 3. Make sure Keycloak proxy settings are correct (KC_PROXY=edge, KC_HOSTNAME_STRICT=true)
      * 4. Browser cookies must be preserved across redirects
@@ -139,7 +139,7 @@ public class OAuth2CallbackController {
 
         try {
             // Use the actual callback URL that was registered
-            String callbackUrl = String.format("http://%s:%s/oauth2/callback/mobile", serverHost, serverPort);
+            String callbackUrl = String.format("http://%s:%s/api/v1/auth/oauth2/callback/mobile", serverHost, serverPort);
 
             LoginResponse loginResponse = keycloakOAuth2Service.exchangeGoogleCodeForTokenMobile(
                     code,
@@ -163,6 +163,6 @@ public class OAuth2CallbackController {
     @Operation(summary = "Test callback endpoint", description = "Verify callback endpoint is accessible")
     public ResponseEntity<String> testCallback() {
         return ResponseEntity.ok("OAuth2 callback endpoint is working! ✅\n" +
-                "Callback URL: http://" + serverHost + ":" + serverPort + "/oauth2/callback/swagger");
+                "Callback URL: http://" + serverHost + ":" + serverPort + "/api/v1/auth/oauth2/callback/swagger");
     }
 }

@@ -66,12 +66,11 @@ public class PKCEUtil {
         System.out.println("Code Verifier: " + codeVerifier);
         System.out.println("Code Challenge: " + codeChallenge);
         System.out.println("\nUse these values to test the Google login flow:");
-        System.out.println("1. Send the Code Verifier to GET /api/login/google/mobile");
-        System.out.println("2. Use the same Code Verifier in POST /api/google/callback/mobile");
+        System.out.println("1. Send the Code Verifier to GET /api/v1/auth/login/google/mobile");
+        System.out.println("2. Use the same Code Verifier in POST /api/v1/auth/google/callback/mobile");
         System.out.println("\nExample cURL command:");
-        System.out.println("curl -X GET \"http://localhost:8081/api/login/google/mobile?codeVerifier=" + codeVerifier + "&redirectUri=http://localhost:8081/auth/callback\"");
+        System.out.println("curl -X GET \"http://localhost:8081/api/v1/auth/login/google/mobile?codeVerifier=" + codeVerifier + "&redirectUri=http://localhost:8081/auth/callback\"");
         System.out.println("\nIMPORTANT: The redirectUri must be registered in Keycloak:");
         System.out.println("Keycloak Admin Console -> Clients -> auth2-client -> Valid redirect URIs");
     }
 }
-

@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
  * Provides endpoints for user registration, login, token refresh, email verification, and password reset.
  */
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/v1/auth")
 @AllArgsConstructor
 @Slf4j
 public class AuthController {
@@ -29,7 +29,7 @@ public class AuthController {
      * @param request The registration request containing user details.
      * @return A ResponseEntity containing the registration response.
      */
-    @PostMapping("/auth/register")
+    @PostMapping("/register")
     public ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
         log.info(
                 "Received registration request for email: {}, firstName: {}, lastName: {}",
@@ -47,7 +47,7 @@ public class AuthController {
      * @param request The login request containing user credentials.
      * @return A ResponseEntity containing the login response.
      */
-    @PostMapping("/auth/login")
+    @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody @NonNull LoginRequest request) {
         log.info(
                 "Received login request for email: {}",
@@ -63,7 +63,7 @@ public class AuthController {
      * @param refreshToken The refresh token to generate a new access token.
      * @return A ResponseEntity containing the new login response.
      */
-    @PostMapping("/auth/refresh-token")
+    @PostMapping({"/refresh", "/refresh-token"})
     public ResponseEntity<LoginResponse> refreshToken(@RequestBody @NonNull String refreshToken) {
         log.info(
                 "Received token refresh request"
@@ -78,7 +78,7 @@ public class AuthController {
      * @param userId The ID of the user.
      * @return A ResponseEntity containing the email verification status.
      */
-    @GetMapping("/auth/verify-email/{userId}")
+    @GetMapping("/verify-email/{userId}")
     public ResponseEntity<Boolean> isEmailVerified(@PathVariable @NonNull String userId) {
         log.info(
                 "Received email verification status request for userId: {}",
@@ -94,7 +94,7 @@ public class AuthController {
      * @param userId The ID of the user.
      * @return A ResponseEntity indicating the operation status.
      */
-    @GetMapping("/auth/send-verification-email/{userId}")
+    @GetMapping("/send-verification-email/{userId}")
     public ResponseEntity<Void> sendVerificationEmail(@PathVariable @NonNull String userId) {
         log.info(
                 "Received send verification email request for userId: {}",
@@ -110,7 +110,7 @@ public class AuthController {
      * @param email The email address of the user.
      * @return A ResponseEntity indicating the operation status.
      */
-    @PostMapping("/auth/password-reset")
+    @PostMapping("/password-reset")
     public ResponseEntity<Void> sendPasswordResetEmail(@RequestParam @NonNull String email) {
         log.info(
                 "Received password reset email request for email: {}",
@@ -128,7 +128,7 @@ public class AuthController {
      * @param request The email change request containing new email and password for verification
      * @return A ResponseEntity containing the email update response
      */
-    @PutMapping("/auth/update-email")
+    @PutMapping("/update-email")
     public ResponseEntity<EmailUpdatedResponse> updateEmail(
             @RequestHeader("Authorization") String authHeader,
             @RequestBody EmailChangeRequest request
@@ -169,7 +169,7 @@ public class AuthController {
         }
     }
 
-    @PutMapping("/auth/change-email")
+    @PutMapping("/change-email")
     public ResponseEntity<EmailUpdatedResponse> changeEmail(@Valid @RequestBody @NonNull EmailChangeRequest request) {
         log.info(
                 "Received email change request for email: {}",
@@ -185,7 +185,7 @@ public class AuthController {
      * @param request Profile update request containing email, firstName, lastName
      * @return 200 OK on success
      */
-    @PutMapping("/auth/update-profile")
+    @PutMapping("/update-profile")
     public ResponseEntity<Void> updateUserProfile(@RequestBody @NonNull UpdateProfileRequest request) {
         keycloakAdminService.updateUserProfile(request);
         return ResponseEntity.ok().build();
