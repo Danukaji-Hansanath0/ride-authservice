@@ -13,7 +13,10 @@ public class EmailNotificationHandler extends AbstractEventHandler<UserCreateEve
 
     @Override
     public void handle(UserCreateEvent event) {
+        // TODO: Enable email notification sending
         // Logic to send email notification
-        System.out.println("Sending email notification to " + event.getEmail() + " for user " + event.getName());
+        // System.out.println("Sending email notification to " + event.getEmail() + " for user " + event.getName());
+        System.out.println("Email notification event received for user " + event.getName() + " (" + event.getEmail() + ")");
+        System.out.println("Email notification is currently disabled. Enable it by uncommenting the code above.");
     }
 }

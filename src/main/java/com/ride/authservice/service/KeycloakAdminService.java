@@ -64,4 +64,11 @@ package com.ride.authservice.service;
         void sendPasswordResetEmail(String email);
 
         EmailUpdatedResponse changeUserEmail(EmailChangeRequest request);
+
+        /**
+         * Updates user profile information (firstName, lastName) in Keycloak.
+         *
+         * @param request The update request containing email, firstName, lastName
+         */
+        void updateUserProfile(UpdateProfileRequest request);
     }

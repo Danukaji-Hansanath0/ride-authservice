@@ -1,127 +1,85 @@
 package com.ride.authservice.service.impl;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ride.authservice.dto.LoginResponse;
 import com.ride.authservice.service.KeycloakOAuth2AdminServiceApp;
+import com.ride.authservice.service.SecurityEventLogger;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-/**
- * Service for handling OAuth2 authentication with Keycloak and Google.
- * Provides endpoints for mobile login using PKCE (Proof Key for Code Exchange).
- *
- * This implementation uses Google's OAuth2 standards with proper scope handling
- * to avoid common issues like invalid_scope errors.
- */
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
 @Slf4j
 @Service
+@SuppressWarnings({"unused"})
 public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminServiceApp {
+
     private final String keycloakAuthUrl;
     private final String clientId;
+    private final String clientSecret; // optional
     private final RestTemplate restTemplate;
     private final String keycloakTokenUrl;
+    private final SecurityEventLogger securityEventLogger;
+    private final ObjectMapper objectMapper;
 
-    /**
-     * Google OAuth2 valid scopes.
-     * Note: When using Keycloak's identity provider (kc_idp_hint=google),
-     * scopes must be configured in Keycloak Admin Console under:
-     * Identity Providers > Google > Settings > Default Scopes
-     *
-     * The scopes should be: openid email profile
-     * (NOT https://www.googleapis.com/auth/userinfo.profile)
-     */
-    private static final String[] KEYCLOAK_IDP_SCOPES = {
-            "openid",
-            "email",
-            "profile"
-    };
-
-    /**
-     * Constructor for dependency injection.
-     *
-     * @param keycloakAuthUrl Keycloak authorization endpoint URL
-     * @param clientId Keycloak client ID for OAuth2
-     * @param restTemplate RestTemplate for HTTP requests
-     * @param keycloakTokenUrl Keycloak token endpoint URL
-     */
     public KeycloakOAuth2AdminServiceAppImpl(
             @Value("${keycloak.admin.auth2-client.auth-url}") String keycloakAuthUrl,
             @Value("${keycloak.admin.auth2-client.client-id}") String clientId,
+            @Value("${keycloak.admin.auth2-client.client-secret:}") String clientSecret, // blank = public client
             RestTemplate restTemplate,
-            @Value("${keycloak.admin.token-url}") String keycloakTokenUrl
+            @Value("${keycloak.admin.token-url}") String keycloakTokenUrl,
+            SecurityEventLogger securityEventLogger,
+            ObjectMapper objectMapper
     ) {
         this.clientId = clientId;
+        this.clientSecret = clientSecret == null ? "" : clientSecret;
         this.keycloakAuthUrl = keycloakAuthUrl;
         this.restTemplate = restTemplate;
         this.keycloakTokenUrl = keycloakTokenUrl;
+        this.securityEventLogger = securityEventLogger;
+        this.objectMapper = objectMapper;
+    }
 
-            }
-
-    /**
-     * Generates the Google login URL for mobile clients using PKCE.
-     *
-     * This method constructs a properly formatted OAuth2 authorization URL with:
-     * - PKCE code challenge for security
-     * - Google-specific identity provider hint (kc_idp_hint)
-     * - State parameter for CSRF protection
-     *
-     * IMPORTANT: When using kc_idp_hint=google, Keycloak manages the OAuth2 scopes
-     * through its Identity Provider configuration. Do NOT include the scope parameter
-     * in this URL. Configure scopes in Keycloak Admin Console instead:
-     * Identity Providers > Google > Settings > Default Scopes: "openid email profile"
-     *
-     * @param codeChallenge PKCE code challenge (SHA-256 hash of code verifier)
-     * @param redirectUri Redirect URI for the mobile app (must match registered URI)
-     * @param state State parameter for CSRF protection (must be validated in callback)
-     * @return Complete Google authorization URL
-     */
     @Override
     public String getGoogleLoginUrlForMobile(String codeChallenge, String redirectUri, String state) {
-        log.debug("Building Google login URL with codeChallenge: {}, redirectUri: {}, state: {}",
-                codeChallenge, redirectUri, state);
-
-        // When using kc_idp_hint, Keycloak manages scopes via Identity Provider config
-        // Do NOT include scope parameter here
+        // IMPORTANT: redirectUri must be EXACTLY the same later during token exchange.
+        // Also it MUST be allowed in Keycloak Client -> Valid Redirect URIs.
         String url = UriComponentsBuilder.fromUriString(keycloakAuthUrl)
                 .queryParam("client_id", clientId)
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("response_type", "code")
+                .queryParam("scope", "openid") // ensures id_token
                 .queryParam("kc_idp_hint", "google")
                 .queryParam("code_challenge", codeChallenge)
                 .queryParam("code_challenge_method", "S256")
                 .queryParam("state", state)
+                // encode everything properly (redirect_uri especially)
+                .encode(StandardCharsets.UTF_8)
                 .build()
                 .toUriString();
 
-        log.info("Generated Google login URL for mobile with state parameter");
-
+        log.info("Generated Google login URL (PKCE) for clientId={}", clientId);
         return url;
     }
 
-
-    /**
-     * Exchanges the authorization code for tokens using PKCE for mobile clients.
-     *
-     * This method sends a token exchange request to Keycloak with:
-     * - The authorization code received from Google
-     * - The code verifier (must match the code challenge used earlier)
-     * - The same redirect URI used in the authorization request
-     *
-     * @param code Authorization code from Google (obtained after user authentication)
-     * @param codeVerifier PKCE code verifier (must be the same one used to generate code challenge)
-     * @param redirectUri Redirect URI for the mobile app (must match the one in auth request)
-     * @return LoginResponse containing access_token, refresh_token, and token metadata
-     * @throws RuntimeException if token exchange fails
-     */
     @Override
+    @CircuitBreaker(name = "keycloak", fallbackMethod = "exchangeCodeFallback")
+    @Retry(name = "keycloak")
     public LoginResponse exchangeGoogleCodeForTokenMobile(String code, String codeVerifier, String redirectUri) {
-        log.info("Exchanging authorization code for tokens");
-        log.debug("Code: {}, Redirect URI: {}", code, redirectUri);
+        log.info("Exchanging authorization code for tokens (clientId={})", clientId);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -133,53 +91,126 @@ public class KeycloakOAuth2AdminServiceAppImpl implements KeycloakOAuth2AdminSer
         form.add("redirect_uri", redirectUri);
         form.add("code_verifier", codeVerifier);
 
+        // If client is confidential, Keycloak requires client_secret or basic auth.
+        if (!clientSecret.isBlank()) {
+            form.add("client_secret", clientSecret);
+        }
+
         try {
-            LoginResponse response = getLoginResponse(headers, form);
-            log.info("Token exchange successful. Access token obtained.");
-            return response;
+            return getLoginResponse(headers, form);
+        } catch (HttpClientErrorException e) {
+            log.error("HTTP error during token exchange: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            securityEventLogger.logOAuth2Error("google", e.getMessage(), "server");
+
+            if (e.getStatusCode() == HttpStatus.BAD_REQUEST) {
+                throw new RuntimeException("Invalid authorization code / redirect_uri / verifier (400)", e);
+            }
+            if (e.getStatusCode() == HttpStatus.UNAUTHORIZED) {
+                throw new RuntimeException("Client authentication failed (401). Check client_secret / client type", e);
+            }
+            throw new RuntimeException("Token exchange failed: " + e.getMessage(), e);
+
+        } catch (RestClientException e) {
+            log.error("Rest client error during token exchange: {}", e.getMessage(), e);
+            securityEventLogger.logKeycloakError("token_exchange", e.getMessage(), "server");
+            throw new RuntimeException("Failed to communicate with Keycloak: " + e.getMessage(), e);
+
         } catch (Exception e) {
-            log.error("Failed to exchange code for token: {}", e.getMessage(), e);
+            log.error("Unexpected error during token exchange: {}", e.getMessage(), e);
+            securityEventLogger.logKeycloakError("token_exchange", e.getMessage(), "server");
             throw new RuntimeException("Token exchange failed: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Helper method to perform the token exchange HTTP request to Keycloak.
-     *
-     * Sends a POST request to the Keycloak token endpoint and parses the response.
-     *
-     * @param headers HTTP headers (must include Content-Type: application/x-www-form-urlencoded)
-     * @param form Form data containing OAuth2 parameters (grant_type, code, etc.)
-     * @return LoginResponse containing access token, refresh token, and metadata
-     * @throws RuntimeException if the HTTP request fails or returns non-200 status
-     */
-    private LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form) {
-        log.debug("Sending token exchange request to: {}", keycloakTokenUrl);
+    private LoginResponse exchangeCodeFallback(String code, String codeVerifier, String redirectUri, @NonNull Exception ex) {
+        log.error("Circuit breaker activated - Keycloak unavailable: {}", ex.getMessage());
+        securityEventLogger.logKeycloakError("circuit_breaker_open", ex.getMessage(), "server");
+        throw new RuntimeException("Authentication service temporarily unavailable.", ex);
+    }
 
+    private @NonNull LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form) {
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(form, headers);
 
         try {
-            ResponseEntity<LoginResponse> response = restTemplate.exchange(
+            ResponseEntity<String> tokenResponse = restTemplate.exchange(
                     keycloakTokenUrl,
                     HttpMethod.POST,
                     request,
-                    LoginResponse.class
+                    String.class
             );
 
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
-                log.debug("Successfully received token response from Keycloak");
-                LoginResponse loginResponse = response.getBody();
-                log.debug("Token type: {}, Expires in: {} seconds",
-                        loginResponse.tokenType(), loginResponse.expiresIn());
-                return loginResponse;
+            if (tokenResponse.getStatusCode() != HttpStatus.OK || tokenResponse.getBody() == null) {
+                throw new RuntimeException("Failed token response. Status=" + tokenResponse.getStatusCode());
             }
 
-            log.error("Unexpected response from Keycloak. Status: {}", response.getStatusCode());
-            throw new RuntimeException("Failed to get token from Keycloak. Status: " + response.getStatusCode());
+            JsonNode tokenJson = objectMapper.readTree(tokenResponse.getBody());
+
+            String accessToken = tokenJson.path("access_token").asText(null);
+            String refreshToken = tokenJson.path("refresh_token").asText(null);
+            long expiresIn = tokenJson.path("expires_in").asLong(0);
+            long refreshExpiresIn = tokenJson.path("refresh_expires_in").asLong(0);
+            String tokenType = tokenJson.path("token_type").asText("Bearer");
+            String scope = tokenJson.path("scope").asText("");
+
+            // OIDC: id_token often present when scope includes openid
+            String idToken = tokenJson.path("id_token").asText("");
+
+            if (accessToken == null) {
+                throw new RuntimeException("Keycloak token response missing access_token");
+            }
+
+            // Extract user details from id_token if present
+            String firstName = "";
+            String lastName = "";
+            String email = "";
+            String userId = "";
+
+            if (idToken != null && !idToken.isBlank() && idToken.contains(".")) {
+                JsonNode claims = decodeJwtPayload(idToken);
+                // Keycloak often uses:
+                // sub = userId, preferred_username, email, given_name, family_name
+                userId = claims.path("sub").asText("");
+                email = claims.path("email").asText("");
+                firstName = claims.path("given_name").asText("");
+                lastName = claims.path("family_name").asText("");
+
+                // Fallbacks if Google/Keycloak mapping differs
+                if (firstName.isBlank()) firstName = claims.path("name").asText("");
+            }
+
+            return new LoginResponse(
+                    accessToken,
+                    refreshToken,
+                    expiresIn,
+                    refreshExpiresIn,
+                    tokenType,
+                    scope,
+                    firstName,
+                    lastName,
+                    email,
+                    userId,
+                    "OFFLINE",
+                    false
+            );
 
         } catch (Exception e) {
-            log.error("Error during token exchange request: {}", e.getMessage(), e);
+            log.error("Token exchange request failed: {}", e.getMessage(), e);
             throw new RuntimeException("Token exchange request failed: " + e.getMessage(), e);
+        }
+    }
+
+    private JsonNode decodeJwtPayload(String jwt) {
+        // jwt = header.payload.signature
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) throw new IllegalArgumentException("Invalid JWT");
+
+        byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
+        String json = new String(decoded, StandardCharsets.UTF_8);
+
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse id_token payload", e);
         }
     }
 }

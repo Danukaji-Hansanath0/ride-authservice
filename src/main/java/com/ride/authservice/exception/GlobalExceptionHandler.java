@@ -1,14 +1,23 @@
 package com.ride.authservice.exception;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.ride.authservice.filter.IpSecurityFilter;
+import com.ride.authservice.service.SecurityEventLogger;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.context.request.WebRequest;
 
+import java.nio.charset.CharacterCodingException;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +26,12 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @Autowired(required = false)
+    private SecurityEventLogger securityEventLogger;
+
+    @Autowired(required = false)
+    private IpSecurityFilter ipSecurityFilter;
 
     private ResponseEntity<ApiError> build(HttpStatus status, String message, String path, List<String> details) {
         ApiError error = ApiError.builder()
@@ -108,6 +123,76 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred during processing", getPath(request), null);
     }
 
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiError> handleHttpMessageNotReadable(HttpMessageNotReadableException ex, WebRequest request, HttpServletRequest servletRequest) {
+        String clientIp = getClientIp(servletRequest);
+        log.warn("Malformed request from IP {}: {}", clientIp, ex.getMessage());
+
+        if (securityEventLogger != null) {
+            securityEventLogger.logMalformedRequest(clientIp, getPath(request), "Invalid JSON or HTTP message");
+        }
+
+        if (ipSecurityFilter != null) {
+            ipSecurityFilter.recordMalformedRequest(clientIp);
+        }
+
+        return build(HttpStatus.BAD_REQUEST, "Invalid request format. Please check your request body.", getPath(request), null);
+    }
+
+    @ExceptionHandler(JsonProcessingException.class)
+    public ResponseEntity<ApiError> handleJsonProcessing(JsonProcessingException ex, WebRequest request, HttpServletRequest servletRequest) {
+        String clientIp = getClientIp(servletRequest);
+        log.warn("JSON processing error from IP {}: {}", clientIp, ex.getMessage());
+
+        if (securityEventLogger != null) {
+            securityEventLogger.logMalformedRequest(clientIp, getPath(request), "Invalid JSON structure");
+        }
+
+        if (ipSecurityFilter != null) {
+            ipSecurityFilter.recordMalformedRequest(clientIp);
+        }
+
+        return build(HttpStatus.BAD_REQUEST, "Invalid JSON format", getPath(request), null);
+    }
+
+    @ExceptionHandler(CharacterCodingException.class)
+    public ResponseEntity<ApiError> handleCharacterCoding(CharacterCodingException ex, WebRequest request, HttpServletRequest servletRequest) {
+        String clientIp = getClientIp(servletRequest);
+        log.warn("Character encoding error from IP {}: {}", clientIp, ex.getMessage());
+
+        if (securityEventLogger != null) {
+            securityEventLogger.logMalformedRequest(clientIp, getPath(request), "Invalid character encoding");
+        }
+
+        if (ipSecurityFilter != null) {
+            ipSecurityFilter.recordMalformedRequest(clientIp);
+        }
+
+        return build(HttpStatus.BAD_REQUEST, "Invalid character encoding. Only UTF-8 is supported.", getPath(request), null);
+    }
+
+    @ExceptionHandler(RestClientException.class)
+    public ResponseEntity<ApiError> handleRestClientException(RestClientException ex, WebRequest request) {
+        log.error("Keycloak communication error: {}", ex.getMessage(), ex);
+
+        if (securityEventLogger != null) {
+            securityEventLogger.logKeycloakError("rest_client_call", ex.getMessage(), "server");
+        }
+
+        // Check for specific Keycloak errors
+        String message = ex.getMessage();
+        if (message != null) {
+            if (message.contains("401")) {
+                return build(HttpStatus.UNAUTHORIZED, "Authentication failed", getPath(request), null);
+            }
+            if (message.contains("400")) {
+                return build(HttpStatus.BAD_REQUEST, "Invalid request to authentication service", getPath(request), null);
+            }
+        }
+
+        return build(HttpStatus.SERVICE_UNAVAILABLE, "Authentication service is temporarily unavailable. Please try again.", getPath(request), null);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleGeneric(Exception ex, WebRequest request) {
         log.error("Unhandled exception", ex);
@@ -116,6 +201,25 @@ public class GlobalExceptionHandler {
 
     private String getPath(WebRequest request) {
         return request.getDescription(false).replace("uri=", "");
+    }
+
+    private String getClientIp(HttpServletRequest request) {
+        if (request == null) {
+            return "unknown";
+        }
+        return getString(request);
+    }
+
+    @NonNull
+    public static String getString(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        return ip != null ? ip.split(",")[0].trim() : "unknown";
     }
 }
 

@@ -2,6 +2,7 @@ package com.ride.authservice.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ride.authservice.dto.*;
 import com.ride.authservice.event.EventPublisher;
 import com.ride.authservice.event.UserCreateEvent;
@@ -10,6 +11,7 @@ import com.ride.authservice.exception.EmailVerificationRequiredException;
 import com.ride.authservice.exception.NotFoundException;
 import com.ride.authservice.exception.ServiceOperationException;
 import com.ride.authservice.service.KeycloakAdminService;
+import com.ride.authservice.service.UserServiceClientWebClient;
 import jakarta.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;import org.keycloak.OAuth2Constants;
@@ -33,7 +35,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.keycloak.util.JsonSerialization.mapper;
 
@@ -43,6 +47,7 @@ import static org.keycloak.util.JsonSerialization.mapper;
  */
 @Service
 @Slf4j
+@SuppressWarnings("unused") // EventPublisher will be used when event publishing is enabled
 public class KeycloakAdminServiceImpl implements KeycloakAdminService {
     private final RestTemplate restTemplate = new RestTemplate();
     private final String realm;
@@ -51,6 +56,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
     private final String clientId;
     private final String clientSecret;
     private final EventPublisher eventPublisher;
+    private final UserServiceClientWebClient userServiceClientWebClient;
 
     /**
      * Constructor for initializing KeycloakAdminServiceImpl with required configurations.
@@ -68,13 +74,15 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
             @Value("${keycloak.admin.client-id}") String clientId,
             @Value("${keycloak.admin.client-secret}") String clientSecret,
             @Value("${keycloak.admin.token-url}") String tokenUrl,
-            EventPublisher eventPublisher
+            EventPublisher eventPublisher,
+            UserServiceClientWebClient userServiceClientWebClient
     ) {
         this.realm = realm;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.tokenUrl = tokenUrl;
         this.eventPublisher = eventPublisher;
+        this.userServiceClientWebClient = userServiceClientWebClient;
         this.keycloak = KeycloakBuilder.builder()
                 .serverUrl(serverUrl)
                 .realm(realm)
@@ -124,16 +132,17 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
                 // Send verification email to the newly registered user
                 try {
                     sendVerificationEmail(userId);
+                    log.info("Verification email sent successfully to user: {} ({})", userId, request.email());
                 } catch (Exception emailException) {
-                    // Log the error but don't fail the registration
-                    System.err.println("Failed to send verification email to user " + userId + ": " + emailException.getMessage());
+                    log.error("Failed to send verification email to user {} ({}): {}",
+                             userId, request.email(), emailException.getMessage());
                 }
 
                 // Publish UserCreateEvent for successful user creation
                 UserCreateEvent userCreateEvent = UserCreateEvent.create(
-                    userId,
-                    request.email(),
-                    request.firstName() + " " + request.lastName()
+                        userId,
+                        request.email(),
+                        request.firstName() + " " + request.lastName()
                 );
                 eventPublisher.publish(userCreateEvent);
 
@@ -200,7 +209,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      * @param request The registration request.
      * @return A UserRepresentation object.
      */
-    private static @NonNull UserRepresentation getUserRepresentation(RegisterRequest request) {
+    private static @NonNull UserRepresentation getUserRepresentation(@org.jspecify.annotations.NonNull RegisterRequest request) {
         UserRepresentation user = new UserRepresentation();
         user.setUsername(request.email());
         user.setEmail(request.email());
@@ -224,9 +233,33 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      */
     @Override
     public void sendVerificationEmail(String userId) {
-        RealmResource realmResource = keycloak.realm(realm);
-        UserResource usersResource = realmResource.users().get(userId);
-        usersResource.sendVerifyEmail();
+        try {
+            RealmResource realmResource = keycloak.realm(realm);
+            UserResource usersResource = realmResource.users().get(userId);
+
+            // Check if user exists
+            UserRepresentation user = usersResource.toRepresentation();
+            if (user == null) {
+                log.error("User not found with ID: {}", userId);
+                throw new NotFoundException("User not found with ID: " + userId);
+            }
+
+            // Check if email is already verified
+            if (user.isEmailVerified()) {
+                log.info("Email already verified for user: {} ({})", userId, user.getEmail());
+                return;
+            }
+
+            log.info("Sending verification email to user: {} ({})", userId, user.getEmail());
+            usersResource.sendVerifyEmail();
+            log.info("Verification email sent successfully to user: {} ({})", userId, user.getEmail());
+
+        } catch (NotFoundException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to send verification email to user: {}", userId, e);
+            throw new ServiceOperationException("Failed to send verification email: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -237,10 +270,27 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      */
     @Override
     public boolean isUserEmailVerified(String userId) {
-        RealmResource realmResource = keycloak.realm(realm);
-        UserResource usersResource = realmResource.users().get(userId);
-        UserRepresentation user = usersResource.toRepresentation();
-        return user.isEmailVerified();
+        try {
+            RealmResource realmResource = keycloak.realm(realm);
+            UserResource usersResource = realmResource.users().get(userId);
+            UserRepresentation user = usersResource.toRepresentation();
+
+            if (user == null) {
+                log.error("User not found with ID: {}", userId);
+                throw new NotFoundException("User not found with ID: " + userId);
+            }
+
+            boolean isVerified = user.isEmailVerified();
+            log.info("Email verification status for user {} ({}): {}",
+                    userId, user.getEmail(), isVerified);
+            return isVerified;
+
+        } catch (NotFoundException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to check email verification status for user: {}", userId, e);
+            throw new ServiceOperationException("Failed to check email verification status: " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -250,7 +300,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      * @return A LoginResponse object with authentication tokens.
      */
     @Override
-    public LoginResponse loginUser(LoginRequest request) {
+    public LoginResponse loginUser(@org.jspecify.annotations.NonNull LoginRequest request) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
@@ -260,9 +310,62 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         form.add("client_secret", clientSecret);
         form.add("username", request.email());
         form.add("password", request.password());
+        Map<String , Object> mapData = new HashMap<>();
 
         try {
-            return getLoginResponse(headers, form);
+            // Try to get user profile from user-service (optional - for additional data)
+            try {
+                // Fetch profile JSON string reactively and block with timeout-safe default
+                String profileJson = userServiceClientWebClient
+                        .getUserProfile(request.email())
+                        .blockOptional()
+                        .orElse(null);
+
+                if (profileJson != null && !profileJson.isBlank()) {
+                    ObjectMapper mapper1 = new ObjectMapper();
+                    JsonNode jsonNode = mapper1.readTree(profileJson);
+
+                    // Extract data with null-safe checks
+                    JsonNode firstNameNode = jsonNode.get("firstName");
+                    JsonNode lastNameNode = jsonNode.get("lastName");
+                    JsonNode uidNode = jsonNode.get("uid");
+                    JsonNode emailNode = jsonNode.get("email");
+                    JsonNode phoneNode = jsonNode.get("phoneNumber");
+                    JsonNode availNode = jsonNode.get("userAvailability");
+                    JsonNode activeNode = jsonNode.get("isActive");
+
+                    mapData.put("firstName", firstNameNode != null ? firstNameNode.asText("") : "");
+                    mapData.put("lastName", lastNameNode != null ? lastNameNode.asText("") : "");
+                    mapData.put("uid", uidNode != null ? uidNode.asText("") : "");
+                    mapData.put("email", emailNode != null ? emailNode.asText("") : "");
+                    mapData.put("phoneNumber", phoneNode != null ? phoneNode.asText("") : "");
+                    mapData.put("userAvailability", availNode != null ? availNode.asText("OFFLINE") : "OFFLINE");
+                    mapData.put("isActive", activeNode != null && activeNode.asBoolean(false));
+
+                    log.info("✅ User profile loaded from user-service for email: {}", request.email());
+                } else {
+                    log.warn("⚠️ User profile not available from user-service for email: {} (continuing)", request.email());
+                    mapData.put("firstName", "");
+                    mapData.put("lastName", "");
+                    mapData.put("uid", "");
+                    mapData.put("email", "");
+                    mapData.put("phoneNumber", "");
+                    mapData.put("userAvailability", "OFFLINE");
+                    mapData.put("isActive", false);
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Could not retrieve user profile from user-service (non-blocking): {}", e.getMessage());
+                // Continue with empty user data - profile sync may not be complete yet
+                mapData.put("firstName", "");
+                mapData.put("lastName", "");
+                mapData.put("uid", "");
+                mapData.put("email", "");
+                mapData.put("phoneNumber", "");
+                mapData.put("userAvailability", "OFFLINE");
+                mapData.put("isActive", false);
+            }
+
+            return getLoginResponse(headers, form, mapData);
         } catch (HttpClientErrorException e) {
             String body = e.getResponseBodyAsString();
             int statusCode = e.getStatusCode().value();
@@ -332,7 +435,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         form.add("refresh_token", refreshToken);
 
         try {
-            return getLoginResponse(headers, form);
+            return getLoginResponse(headers, form, new HashMap<>());
         } catch (Exception e) {
             throw new AuthenticationFailedException("Token refresh error: " + e.getMessage(), e);
         }
@@ -351,7 +454,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         if (found.isEmpty()) {
             throw new NotFoundException("User with email " + email + " not found.");
         }
-        String userId = found.get(0).getId();
+        String userId = found.getFirst().getId();
         users.get(userId).executeActionsEmail(
                 null,
                 null,
@@ -398,11 +501,11 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
                 );
             }
 
-            String userId = users.get(0).getId();
+            String userId = users.getFirst().getId();
 
             // Step 3: Check if new email is already in use
             List<UserRepresentation> existingUsers = usersResource.search(request.getNewEmail(), 0, 1);
-            if (!existingUsers.isEmpty() && !existingUsers.get(0).getId().equals(userId)) {
+            if (!existingUsers.isEmpty() && !existingUsers.getFirst().getId().equals(userId)) {
                 log.error("Email already in use: {}", request.getNewEmail());
                 return new EmailUpdatedResponse(
                         userId,
@@ -491,6 +594,7 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
         }
     }
 
+
     /**
      * Helper method to send an HTTP request to Keycloak and parse the response.
      *
@@ -500,16 +604,74 @@ public class KeycloakAdminServiceImpl implements KeycloakAdminService {
      * @throws JsonProcessingException If there is an error parsing the response.
      */
     @NonNull
-    private LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form) throws JsonProcessingException {
+    private LoginResponse getLoginResponse(HttpHeaders headers, MultiValueMap<String, String> form, Map<String,Object> data) throws JsonProcessingException {
         ResponseEntity<String> response = restTemplate.postForEntity(tokenUrl, new HttpEntity<>(form, headers), String.class);
         JsonNode json = mapper.readTree(response.getBody());
+
+        // Extract user data with null-safe handling
+        String firstName = data != null && data.get("firstName") != null ? data.get("firstName").toString() : "";
+        String lastName = data != null && data.get("lastName") != null ? data.get("lastName").toString() : "";
+        String email = data != null && data.get("email") != null ? data.get("email").toString() : "";
+        String uid = data != null && data.get("uid") != null ? data.get("uid").toString() : "";
+        String userAvailability = data != null && data.get("userAvailability") != null ? data.get("userAvailability").toString() : "OFFLINE";
+        boolean isActive = data != null && data.get("isActive") != null && Boolean.parseBoolean(data.get("isActive").toString());
+
         return new LoginResponse(
                 json.path("access_token").asText(null),
                 json.path("refresh_token").asText(null),
                 json.path("expires_in").asLong(0),
                 json.path("refresh_expires_in").asLong(0),
                 json.path("token_type").asText(null),
-                json.path("scope").asText(null)
+                json.path("scope").asText(null),
+                firstName,
+                lastName,
+                email,
+                uid,
+                userAvailability,
+                isActive
         );
+    }
+
+    /**
+     * Updates user profile information (firstName, lastName) in Keycloak.
+     *
+     * @param request The update request containing email, firstName, lastName
+     */
+    @Override
+    public void updateUserProfile(UpdateProfileRequest request) {
+        try {
+            RealmResource resource = keycloak.realm(realm);
+            UsersResource users = resource.users();
+            List<UserRepresentation> matches = users.search(request.getEmail(), true);
+            if (matches == null || matches.isEmpty()) {
+                throw new NotFoundException("User not found with email: " + request.getEmail());
+            }
+            UserRepresentation userRep = matches.getFirst();
+            userRep.setFirstName(request.getFirstName());
+            userRep.setLastName(request.getLastName());
+            users.get(userRep.getId()).update(userRep);
+            log.info("Updated Keycloak profile for {}", request.getEmail());
+
+            // Also update the user-service profile to keep data in sync
+            try {
+                UserProfileRequest userProfileRequest = UserProfileRequest.builder()
+                        .email(request.getEmail())
+                        .firstName(request.getFirstName())
+                        .lastName(request.getLastName())
+                        .phoneNumber(request.getPhoneNumber())
+                        .build();
+
+                userServiceClientWebClient.updateUserProfile(request.getEmail(), userProfileRequest)
+                        .blockOptional();
+                log.info("Updated user-service profile for {}", request.getEmail());
+            } catch (Exception clientEx) {
+                log.warn("Failed to update user-service profile for {}: {}", request.getEmail(), clientEx.getMessage());
+            }
+        } catch (NotFoundException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Failed to update profile for {}: {}", request.getEmail(), e.getMessage(), e);
+            throw new ServiceOperationException("Error updating Keycloak profile", e);
+        }
     }
 }

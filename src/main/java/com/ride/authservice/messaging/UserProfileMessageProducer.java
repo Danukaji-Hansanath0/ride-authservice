@@ -2,7 +2,7 @@ package com.ride.authservice.messaging;
 
 import com.ride.authservice.config.RabbitMQConfig;
 import com.ride.authservice.dto.UserProfileRequest;
-import com.ride.authservice.service.UserServiceClient;
+import com.ride.authservice.service.UserServiceClientWebClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpConnectException;
@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 public class UserProfileMessageProducer {
 
     private final RabbitTemplate rabbitTemplate;
-    private final UserServiceClient userServiceClient;
+    private final UserServiceClientWebClient userServiceClient;
 
     /**
      * Send user profile creation message to queue with HTTP fallback
