@@ -16,12 +16,6 @@ import java.util.List;
 @Configuration
 public class SwaggerConfig {
 
-    @Value("${server.host:localhost}")
-    private String hostName;
-
-    @Value("${server.port:8081}")
-    private String serverPort;
-
     @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri:}")
     private String issuerUri;
 
@@ -41,17 +35,8 @@ public class SwaggerConfig {
                         .license(new License()
                                 .name("Apache 2.0")
                                 .url("https://www.apache.org/licenses/LICENSE-2.0")))
-                .servers(List.of(
-                        new Server()
-                                .url("https://api." + hostName)
-                                .description("Production Server"),
-                        new Server()
-                                .url("http://localhost:8080/auth-service")
-                                .description("Gateway Local"),
-                        new Server()
-                                .url("http://" + hostName + ":" + serverPort)
-                                .description("Direct Local Service")
-                ))
+                // Use the current request host (localhost, VPS IP, or domain) automatically.
+                .servers(List.of(new Server().url("/").description("Current Server")))
                 .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))
                 .components(new Components()
                         .addSecuritySchemes(securitySchemeName,
@@ -97,4 +82,3 @@ public class SwaggerConfig {
  *
  * See KEYCLOAK_SWAGGER_FIX.md for detailed instructions
  */
-

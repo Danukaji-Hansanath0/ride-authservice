@@ -17,14 +17,14 @@ import java.util.Map;
  * Provides endpoints for initiating Google login and handling callbacks.
  *
  * IMPORTANT: For proper OAuth2 flow, use the dedicated callback endpoint:
- * - Swagger UI: http://localhost:8081/oauth2/callback/swagger
- * - Mobile: http://localhost:8081/oauth2/callback/mobile
+ * - Swagger UI: http://localhost:8081/api/v1/auth/oauth2/callback/swagger
+ * - Mobile: http://localhost:8081/api/v1/auth/oauth2/callback/mobile
  *
  * These endpoints are registered in SecurityConfig as public paths.
  */
 @AllArgsConstructor
 @RestController
-@RequestMapping("/api")
+@RequestMapping("/api/v1/auth")
 @Validated
 public class MobileAuthController {
     private final KeycloakOAuth2AdminServiceApp keycloakAdminService;
